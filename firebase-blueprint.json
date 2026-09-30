@@ -1,0 +1,105 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile and role metadata",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Unique user ID" },
+        "displayName": { "type": "string", "description": "User full name" },
+        "email": { "type": "string", "description": "User email address" },
+        "photoURL": { "type": "string", "description": "Avatar image URL" },
+        "role": { "type": "string", "enum": ["user", "admin"], "description": "Access role" },
+        "provider": { "type": "string", "description": "Auth provider" },
+        "createdAt": { "type": "string", "description": "Account creation timestamp" },
+        "lastLogin": { "type": "string", "description": "Last sign-in timestamp" }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "Place": {
+      "title": "Place",
+      "description": "Tourism destinations, nature spots, and cultural heritage locations in Dhemaji",
+      "type": "object",
+      "properties": {
+        "placeName": { "type": "string", "description": "Name of the location" },
+        "description": { "type": "string", "description": "Description of the place" },
+        "category": { "type": "string", "description": "Category such as Nature, Heritage, Riverine, Spiritual" },
+        "images": { "type": "array", "description": "List of photo URLs" },
+        "coverImage": { "type": "string", "description": "Primary banner image" },
+        "latitude": { "type": "number", "description": "Geo latitude" },
+        "longitude": { "type": "number", "description": "Geo longitude" },
+        "address": { "type": "string", "description": "Location address or landmark" },
+        "bestTimeToVisit": { "type": "string", "description": "Recommended visiting season" },
+        "thingsToDo": { "type": "array", "description": "Activities and experiences" },
+        "contributorId": { "type": "string", "description": "UID of author who submitted" },
+        "contributorName": { "type": "string", "description": "Name of contributor" },
+        "contributorEmail": { "type": "string", "description": "Email of contributor" },
+        "createdAt": { "type": "string", "description": "Submission ISO timestamp" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"], "description": "Moderation status" }
+      },
+      "required": ["placeName", "description", "category", "status"]
+    },
+    "Culture": {
+      "title": "Culture",
+      "description": "Indigenous folklore, dances, crafts, weaving, and traditions of Dhemaji",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "description": "Title of the cultural practice" },
+        "category": { "type": "string", "description": "Category of cultural tradition" },
+        "description": { "type": "string", "description": "Detailed explanation" },
+        "images": { "type": "array", "description": "Photo gallery URLs" },
+        "coverImage": { "type": "string", "description": "Featured image URL" },
+        "community": { "type": "string", "description": "Associated indigenous tribe or community" },
+        "villageOrArea": { "type": "string", "description": "Locality or sub-division in Dhemaji" },
+        "language": { "type": "string", "description": "Spoken dialect or language" },
+        "latitude": { "type": "number", "description": "Geo latitude" },
+        "longitude": { "type": "number", "description": "Geo longitude" },
+        "history": { "type": "string", "description": "Origins and historical context" },
+        "significance": { "type": "string", "description": "Cultural and spiritual significance" },
+        "howPracticed": { "type": "string", "description": "How the craft or ritual is performed" },
+        "relatedFestivals": { "type": "array", "description": "Associated festival names" },
+        "videoUrl": { "type": "string", "description": "Optional documentary/video link" },
+        "contributorId": { "type": "string", "description": "UID of contributor" },
+        "contributorName": { "type": "string", "description": "Contributor name" },
+        "contributorEmail": { "type": "string", "description": "Contributor email" },
+        "createdAt": { "type": "string", "description": "Submission timestamp" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"], "description": "Approval status" }
+      },
+      "required": ["title", "category", "description", "status"]
+    },
+    "AdminActionLog": {
+      "title": "AdminActionLog",
+      "description": "Audit trail for administrative moderation actions",
+      "type": "object",
+      "properties": {
+        "adminUid": { "type": "string", "description": "UID of admin" },
+        "adminEmail": { "type": "string", "description": "Email of admin" },
+        "action": { "type": "string", "description": "Action performed" },
+        "contentType": { "type": "string", "description": "Target collection type" },
+        "contentId": { "type": "string", "description": "ID of document affected" },
+        "contentTitle": { "type": "string", "description": "Title/Name of target" },
+        "timestamp": { "type": "string", "description": "Timestamp of action" },
+        "notes": { "type": "string", "description": "Optional notes" }
+      },
+      "required": ["adminUid", "action", "contentType", "contentId", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "User profiles and account data"
+    },
+    "/places/{placeId}": {
+      "schema": { "$ref": "#/entities/Place" },
+      "description": "Tourism destinations and submitted places"
+    },
+    "/culture/{cultureId}": {
+      "schema": { "$ref": "#/entities/Culture" },
+      "description": "Cultural traditions and folklore stories"
+    },
+    "/adminActions/{actionId}": {
+      "schema": { "$ref": "#/entities/AdminActionLog" },
+      "description": "Admin action audit logs"
+    }
+  }
+}

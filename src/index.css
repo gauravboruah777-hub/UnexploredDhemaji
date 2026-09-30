@@ -1,0 +1,73 @@
+@import "tailwindcss";
+
+@theme {
+  --color-forest: #0B251B;
+  --color-forest-900: #071811;
+  --color-forest-800: #0B251B;
+  --color-forest-700: #103A2B;
+  --color-forest-600: #1B5E43;
+
+  --color-gold-light: #F3CF7A;
+  --color-gold: #D99B26;
+  --color-gold-dark: #B77E15;
+  --color-gold-hover: #E5AC39;
+
+  --color-ivory: #FAF8F2;
+  --color-ivory-warm: #F5F1E8;
+  --color-ivory-card: #FCFAF6;
+
+  --color-charcoal: #1F2923;
+  --color-charcoal-muted: #4A5B52;
+
+  --font-serif: "Cinzel", "Playfair Display", Georgia, serif;
+  --font-editorial: "Playfair Display", Georgia, serif;
+  --font-sans: "Plus Jakarta Sans", system-ui, sans-serif;
+
+  --shadow-gold-glow: 0 8px 30px -4px rgba(217, 155, 38, 0.35);
+  --shadow-deep-card: 0 20px 40px -15px rgba(11, 37, 27, 0.12);
+}
+
+@keyframes floatGentle {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(8px); }
+}
+
+.animate-float {
+  animation: floatGentle 2.8s ease-in-out infinite;
+}
+
+.assamese-motif-divider {
+  background-image: radial-gradient(#D99B26 1px, transparent 1px), radial-gradient(#1B5E43 1px, transparent 1px);
+  background-size: 16px 16px;
+  background-position: 0 0, 8px 8px;
+}
+
+.jaapi-glow-line {
+  background: linear-gradient(90deg, transparent, #D99B26, transparent);
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.4s ease-out forwards;
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20%, 60% { transform: translateX(-4px); }
+  40%, 80% { transform: translateX(4px); }
+}
+
+.animate-shake {
+  animation: shake 0.4s ease-in-out;
+}
+

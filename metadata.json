@@ -1,0 +1,6 @@
+{
+  "name": "Unexplored Dhemaji",
+  "description": "Discover the hidden beauty, indigenous culture, ancient ruins, and pristine riverine landscapes of Dhemaji, Assam.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

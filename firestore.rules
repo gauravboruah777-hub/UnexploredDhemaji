@@ -1,0 +1,59 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        request.auth.token.email == 'boruahborajen2019@gmail.com' ||
+        request.auth.token.email == 'gauravboruah777@gmail.com' ||
+        request.auth.token.admin == true
+      );
+    }
+
+    match /users/{userId} {
+      // Admins can read all users, users can read themselves
+      allow read: if isAuthenticated() && (isAdmin() || request.auth.uid == userId);
+      // Users can write their own document, but cannot elevate role unless admin
+      allow create, update: if isAuthenticated() && (
+        isAdmin() ||
+        (request.auth.uid == userId && (
+          !('role' in request.resource.data) ||
+          request.resource.data.role == 'user' ||
+          (request.auth.token.email == 'boruahborajen2019@gmail.com' && request.resource.data.role == 'admin')
+        ))
+      );
+      allow delete: if isAdmin();
+    }
+
+    match /places/{placeId} {
+      // Public can read places; approved content is visible publicly
+      allow read: if true;
+      // Public contributions: anyone can submit a place, but status must be "pending"
+      allow create: if request.resource.data.status == "pending" || isAdmin();
+      // Only administrators can approve, reject, edit, or update places
+      allow update: if isAdmin();
+      // Only administrators can delete places
+      allow delete: if isAdmin();
+    }
+
+    match /culture/{cultureId} {
+      // Public can read culture entries
+      allow read: if true;
+      // Public contributions: anyone can submit a culture story, but status must be "pending"
+      allow create: if request.resource.data.status == "pending" || isAdmin();
+      // Only administrators can approve, reject, edit, or update culture items
+      allow update: if isAdmin();
+      // Only administrators can delete culture items
+      allow delete: if isAdmin();
+    }
+
+    match /adminActions/{actionId} {
+      // Audit logs can only be read and created by authorized admins
+      allow read, create: if isAdmin();
+      allow update, delete: if false; // immutable audit log
+    }
+  }
+}
