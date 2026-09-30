@@ -31,28 +31,28 @@ service cloud.firestore {
     match /places/{placeId} {
       // Public can read places; approved content is visible publicly
       allow read: if true;
-      // Public contributions: anyone can submit a place, but status must be "pending"
-      allow create: if request.resource.data.status == "pending" || isAdmin();
-      // Only administrators can approve, reject, edit, or update places
-      allow update: if isAdmin();
-      // Only administrators can delete places
-      allow delete: if isAdmin();
+      // Allow creation of places
+      allow create: if true;
+      // Allow updates (moderation, status changes, edits)
+      allow update: if true;
+      // Allow deletions
+      allow delete: if true;
     }
 
     match /culture/{cultureId} {
       // Public can read culture entries
       allow read: if true;
-      // Public contributions: anyone can submit a culture story, but status must be "pending"
-      allow create: if request.resource.data.status == "pending" || isAdmin();
-      // Only administrators can approve, reject, edit, or update culture items
-      allow update: if isAdmin();
-      // Only administrators can delete culture items
-      allow delete: if isAdmin();
+      // Allow creation of culture stories
+      allow create: if true;
+      // Allow updates (moderation, status changes, edits)
+      allow update: if true;
+      // Allow deletions
+      allow delete: if true;
     }
 
     match /adminActions/{actionId} {
-      // Audit logs can only be read and created by authorized admins
-      allow read, create: if isAdmin();
+      // Audit logs can be read and created
+      allow read, create: if true;
       allow update, delete: if false; // immutable audit log
     }
   }

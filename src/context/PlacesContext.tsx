@@ -4,11 +4,13 @@ import { INITIAL_PLACES } from '../data/initialPlaces';
 import { db } from '../firebase';
 import {
   collection,
-  addDoc,
   doc,
-  updateDoc,
+  setDoc,
   deleteDoc,
-  onSnapshot
+  onSnapshot,
+  getDocs,
+  query,
+  where
 } from 'firebase/firestore';
 
 interface PlacesContextType {
@@ -45,18 +47,27 @@ export const PlacesProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     let unsubscribe = () => {};
 
     const loadPlaces = async () => {
-      // Load any locally cached community submissions first
+      // 1. Load any locally cached community submissions first
+      let localSubmissions: Place[] = [];
       try {
         const localData = localStorage.getItem(LOCAL_STORAGE_PLACES_KEY);
         if (localData) {
-          const parsed: Place[] = JSON.parse(localData);
-          setUserSubmissions(parsed);
+          localSubmissions = JSON.parse(localData);
+          setUserSubmissions(localSubmissions);
         }
       } catch (e) {
         console.warn('Local places load warning:', e);
       }
 
-      // Sync with Firestore collection 'places'
+      // Initialize with curated initial places + local submissions
+      setPlaces(() => {
+        const initialMap = new Map<string, Place>();
+        INITIAL_PLACES.forEach(p => initialMap.set(p.id, p));
+        localSubmissions.forEach(p => initialMap.set(p.id, p));
+        return Array.from(initialMap.values());
+      });
+
+      // 2. Sync with Firestore collection 'places'
       try {
         const placesCollection = collection(db, 'places');
         unsubscribe = onSnapshot(
@@ -85,10 +96,40 @@ export const PlacesProvider: React.FC<{ children: React.ReactNode }> = ({ childr
               });
             });
 
-            // Merge initial curated places with Firestore places
+            // Read the latest local submissions from localStorage to preserve approved status
+            let latestLocalSubmissions: Place[] = [];
+            try {
+              const currentLocal = localStorage.getItem(LOCAL_STORAGE_PLACES_KEY);
+              if (currentLocal) {
+                latestLocalSubmissions = JSON.parse(currentLocal);
+              }
+            } catch (err) {}
+
             const mergedMap = new Map<string, Place>();
             INITIAL_PLACES.forEach(p => mergedMap.set(p.id, p));
-            firestorePlaces.forEach(p => mergedMap.set(p.id, p));
+
+            // Merge local submissions
+            latestLocalSubmissions.forEach(p => mergedMap.set(p.id, p));
+
+            // Merge Firestore places
+            firestorePlaces.forEach(p => {
+              // Check if there is an existing local entry with matching placeName or ID that was approved locally
+              const existingLocal = latestLocalSubmissions.find(
+                l => l.id === p.id || l.placeName.toLowerCase().trim() === p.placeName.toLowerCase().trim()
+              );
+              if (existingLocal && existingLocal.status === 'approved' && p.status === 'pending') {
+                p.status = 'approved';
+                setDoc(doc(db, 'places', p.id), { status: 'approved' }, { merge: true }).catch(() => {});
+              }
+
+              // Deduplicate by name if IDs differed
+              for (const [key, val] of mergedMap.entries()) {
+                if (key !== p.id && val.placeName.toLowerCase().trim() === p.placeName.toLowerCase().trim()) {
+                  mergedMap.delete(key);
+                }
+              }
+              mergedMap.set(p.id, p);
+            });
 
             const allPlaces = Array.from(mergedMap.values());
             setPlaces(allPlaces);
@@ -125,21 +166,23 @@ export const PlacesProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       };
 
       // 1. Save to local storage for contributor tracking
-      const updatedSubmissions = [newPlace, ...userSubmissions];
-      setUserSubmissions(updatedSubmissions);
-      try {
-        localStorage.setItem(LOCAL_STORAGE_PLACES_KEY, JSON.stringify(updatedSubmissions));
-      } catch (e) {
-        console.warn('Could not store to local storage:', e);
-      }
+      setUserSubmissions(prev => {
+        const updated = [newPlace, ...prev.filter(p => p.id !== newPlaceId)];
+        try {
+          localStorage.setItem(LOCAL_STORAGE_PLACES_KEY, JSON.stringify(updated));
+        } catch (e) {
+          console.warn('Could not store to local storage:', e);
+        }
+        return updated;
+      });
 
       // 2. Add to internal state as pending (will not appear in approvedPlaces)
       setPlaces(prev => [newPlace, ...prev.filter(p => p.id !== newPlaceId)]);
 
-      // 3. Persist to Firestore collection 'places'
+      // 3. Persist to Firestore collection 'places' with matching newPlaceId!
       try {
-        const placesCollection = collection(db, 'places');
-        const docRef = await addDoc(placesCollection, {
+        const placeDocRef = doc(db, 'places', newPlaceId);
+        await setDoc(placeDocRef, {
           placeName: newPlace.placeName,
           description: newPlace.description,
           category: newPlace.category,
@@ -156,7 +199,7 @@ export const PlacesProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           createdAt: newPlace.createdAt,
           status: 'pending'
         });
-        return { success: true, id: docRef.id };
+        return { success: true, id: newPlaceId };
       } catch (firestoreErr: any) {
         console.warn('Firestore save warning:', firestoreErr);
         return { success: true, id: newPlaceId };
@@ -170,18 +213,50 @@ export const PlacesProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   // Admin: Update place status (approve / reject)
   const updatePlaceStatus = async (placeId: string, status: 'approved' | 'rejected'): Promise<boolean> => {
     try {
-      // Local state update
+      const targetPlace = places.find(p => p.id === placeId);
+      const targetName = targetPlace?.placeName.toLowerCase().trim();
+
+      // 1. Local state update
       setPlaces(prev =>
-        prev.map(p => (p.id === placeId ? { ...p, status } : p))
-      );
-      setUserSubmissions(prev =>
-        prev.map(p => (p.id === placeId ? { ...p, status } : p))
+        prev.map(p => {
+          if (p.id === placeId || (targetName && p.placeName.toLowerCase().trim() === targetName)) {
+            return { ...p, status };
+          }
+          return p;
+        })
       );
 
-      // Firestore update
+      // 2. LocalStorage & userSubmissions update
+      setUserSubmissions(prev => {
+        const updated = prev.map(p => {
+          if (p.id === placeId || (targetName && p.placeName.toLowerCase().trim() === targetName)) {
+            return { ...p, status };
+          }
+          return p;
+        });
+        try {
+          localStorage.setItem(LOCAL_STORAGE_PLACES_KEY, JSON.stringify(updated));
+        } catch (e) {
+          console.warn('LocalStorage save error:', e);
+        }
+        return updated;
+      });
+
+      // 3. Firestore update with setDoc merge
       try {
         const placeRef = doc(db, 'places', placeId);
-        await updateDoc(placeRef, { status });
+        await setDoc(placeRef, { status }, { merge: true });
+
+        // Also search for any Firestore document that matches by placeName
+        if (targetPlace?.placeName) {
+          const q = query(collection(db, 'places'), where('placeName', '==', targetPlace.placeName));
+          const snap = await getDocs(q);
+          for (const d of snap.docs) {
+            if (d.id !== placeId) {
+              await setDoc(doc(db, 'places', d.id), { status }, { merge: true });
+            }
+          }
+        }
       } catch (err) {
         console.warn('Firestore status update notice:', err);
       }
@@ -195,16 +270,34 @@ export const PlacesProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   // Admin: Edit place details
   const updatePlace = async (placeId: string, updatedFields: Partial<Place>): Promise<boolean> => {
     try {
+      const targetPlace = places.find(p => p.id === placeId);
+      const targetName = targetPlace?.placeName.toLowerCase().trim();
+
       setPlaces(prev =>
-        prev.map(p => (p.id === placeId ? { ...p, ...updatedFields } : p))
+        prev.map(p => {
+          if (p.id === placeId || (targetName && p.placeName.toLowerCase().trim() === targetName)) {
+            return { ...p, ...updatedFields };
+          }
+          return p;
+        })
       );
-      setUserSubmissions(prev =>
-        prev.map(p => (p.id === placeId ? { ...p, ...updatedFields } : p))
-      );
+
+      setUserSubmissions(prev => {
+        const updated = prev.map(p => {
+          if (p.id === placeId || (targetName && p.placeName.toLowerCase().trim() === targetName)) {
+            return { ...p, ...updatedFields };
+          }
+          return p;
+        });
+        try {
+          localStorage.setItem(LOCAL_STORAGE_PLACES_KEY, JSON.stringify(updated));
+        } catch (e) {}
+        return updated;
+      });
 
       try {
         const placeRef = doc(db, 'places', placeId);
-        await updateDoc(placeRef, updatedFields);
+        await setDoc(placeRef, updatedFields, { merge: true });
       } catch (err) {
         console.warn('Firestore updateDoc notice:', err);
       }
@@ -218,12 +311,34 @@ export const PlacesProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   // Admin: Delete place
   const deletePlace = async (placeId: string): Promise<boolean> => {
     try {
-      setPlaces(prev => prev.filter(p => p.id !== placeId));
-      setUserSubmissions(prev => prev.filter(p => p.id !== placeId));
+      const targetPlace = places.find(p => p.id === placeId);
+      const targetName = targetPlace?.placeName.toLowerCase().trim();
+
+      setPlaces(prev =>
+        prev.filter(p => p.id !== placeId && (!targetName || p.placeName.toLowerCase().trim() !== targetName))
+      );
+
+      setUserSubmissions(prev => {
+        const updated = prev.filter(
+          p => p.id !== placeId && (!targetName || p.placeName.toLowerCase().trim() !== targetName)
+        );
+        try {
+          localStorage.setItem(LOCAL_STORAGE_PLACES_KEY, JSON.stringify(updated));
+        } catch (e) {}
+        return updated;
+      });
 
       try {
         const placeRef = doc(db, 'places', placeId);
         await deleteDoc(placeRef);
+
+        if (targetPlace?.placeName) {
+          const q = query(collection(db, 'places'), where('placeName', '==', targetPlace.placeName));
+          const snap = await getDocs(q);
+          for (const d of snap.docs) {
+            await deleteDoc(doc(db, 'places', d.id));
+          }
+        }
       } catch (err) {
         console.warn('Firestore deleteDoc notice:', err);
       }

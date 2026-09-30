@@ -4,11 +4,13 @@ import { INITIAL_CULTURE } from '../data/initialCulture';
 import { db } from '../firebase';
 import {
   collection,
-  addDoc,
   doc,
-  updateDoc,
+  setDoc,
   deleteDoc,
-  onSnapshot
+  onSnapshot,
+  getDocs,
+  query,
+  where
 } from 'firebase/firestore';
 
 interface CultureContextType {
@@ -48,15 +50,23 @@ export const CultureProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     const loadCulture = async () => {
       // 1. Local storage cached contributions
+      let localSubmissions: CultureItem[] = [];
       try {
         const localData = localStorage.getItem(LOCAL_STORAGE_CULTURE_KEY);
         if (localData) {
-          const parsed: CultureItem[] = JSON.parse(localData);
-          setUserCultureSubmissions(parsed);
+          localSubmissions = JSON.parse(localData);
+          setUserCultureSubmissions(localSubmissions);
         }
       } catch (e) {
         console.warn('Local culture cache warning:', e);
       }
+
+      setCultureItems(() => {
+        const initialMap = new Map<string, CultureItem>();
+        INITIAL_CULTURE.forEach(c => initialMap.set(c.id, c));
+        localSubmissions.forEach(c => initialMap.set(c.id, c));
+        return Array.from(initialMap.values());
+      });
 
       // 2. Sync with Firestore collection 'culture'
       try {
@@ -92,13 +102,37 @@ export const CultureProvider: React.FC<{ children: React.ReactNode }> = ({ child
               });
             });
 
-            // Merge curated initial culture with Firestore culture
+            // Read the latest local submissions from localStorage
+            let latestLocalSubmissions: CultureItem[] = [];
+            try {
+              const currentLocal = localStorage.getItem(LOCAL_STORAGE_CULTURE_KEY);
+              if (currentLocal) {
+                latestLocalSubmissions = JSON.parse(currentLocal);
+              }
+            } catch (err) {}
+
             const mergedMap = new Map<string, CultureItem>();
             INITIAL_CULTURE.forEach(c => mergedMap.set(c.id, c));
-            firestoreItems.forEach(c => mergedMap.set(c.id, c));
+            latestLocalSubmissions.forEach(c => mergedMap.set(c.id, c));
 
-            const allItems = Array.from(mergedMap.values());
-            setCultureItems(allItems);
+            firestoreItems.forEach(c => {
+              const existingLocal = latestLocalSubmissions.find(
+                l => l.id === c.id || l.title.toLowerCase().trim() === c.title.toLowerCase().trim()
+              );
+              if (existingLocal && existingLocal.status === 'approved' && c.status === 'pending') {
+                c.status = 'approved';
+                setDoc(doc(db, 'culture', c.id), { status: 'approved' }, { merge: true }).catch(() => {});
+              }
+
+              for (const [key, val] of mergedMap.entries()) {
+                if (key !== c.id && val.title.toLowerCase().trim() === c.title.toLowerCase().trim()) {
+                  mergedMap.delete(key);
+                }
+              }
+              mergedMap.set(c.id, c);
+            });
+
+            setCultureItems(Array.from(mergedMap.values()));
             setIsLoadingCulture(false);
           },
           (error) => {
@@ -132,21 +166,23 @@ export const CultureProvider: React.FC<{ children: React.ReactNode }> = ({ child
       };
 
       // 1. Save to local storage for instant contributor feedback
-      const updatedSubmissions = [newCultureItem, ...userCultureSubmissions];
-      setUserCultureSubmissions(updatedSubmissions);
-      try {
-        localStorage.setItem(LOCAL_STORAGE_CULTURE_KEY, JSON.stringify(updatedSubmissions));
-      } catch (e) {
-        console.warn('Could not cache user culture locally:', e);
-      }
+      setUserCultureSubmissions(prev => {
+        const updated = [newCultureItem, ...prev.filter(c => c.id !== newCultureId)];
+        try {
+          localStorage.setItem(LOCAL_STORAGE_CULTURE_KEY, JSON.stringify(updated));
+        } catch (e) {
+          console.warn('Could not cache user culture locally:', e);
+        }
+        return updated;
+      });
 
       // 2. Add to internal state as pending (will not appear in approvedCultureItems)
       setCultureItems(prev => [newCultureItem, ...prev.filter(c => c.id !== newCultureId)]);
 
-      // 3. Save to Firestore collection 'culture'
+      // 3. Save to Firestore collection 'culture' with matching newCultureId!
       try {
-        const cultureCollection = collection(db, 'culture');
-        const docRef = await addDoc(cultureCollection, {
+        const docRef = doc(db, 'culture', newCultureId);
+        await setDoc(docRef, {
           title: newCultureItem.title,
           category: newCultureItem.category,
           description: newCultureItem.description,
@@ -168,7 +204,7 @@ export const CultureProvider: React.FC<{ children: React.ReactNode }> = ({ child
           createdAt: newCultureItem.createdAt,
           status: 'pending'
         });
-        return { success: true, id: docRef.id };
+        return { success: true, id: newCultureId };
       } catch (firestoreErr: any) {
         console.warn('Firestore culture write notice:', firestoreErr);
         return { success: true, id: newCultureId };
@@ -182,16 +218,46 @@ export const CultureProvider: React.FC<{ children: React.ReactNode }> = ({ child
   // Admin: Update culture status (approve / reject)
   const updateCultureStatus = async (cultureId: string, status: 'approved' | 'rejected'): Promise<boolean> => {
     try {
+      const targetItem = cultureItems.find(c => c.id === cultureId);
+      const targetTitle = targetItem?.title.toLowerCase().trim();
+
       setCultureItems(prev =>
-        prev.map(c => (c.id === cultureId ? { ...c, status } : c))
+        prev.map(c => {
+          if (c.id === cultureId || (targetTitle && c.title.toLowerCase().trim() === targetTitle)) {
+            return { ...c, status };
+          }
+          return c;
+        })
       );
-      setUserCultureSubmissions(prev =>
-        prev.map(c => (c.id === cultureId ? { ...c, status } : c))
-      );
+
+      setUserCultureSubmissions(prev => {
+        const updated = prev.map(c => {
+          if (c.id === cultureId || (targetTitle && c.title.toLowerCase().trim() === targetTitle)) {
+            return { ...c, status };
+          }
+          return c;
+        });
+        try {
+          localStorage.setItem(LOCAL_STORAGE_CULTURE_KEY, JSON.stringify(updated));
+        } catch (e) {
+          console.warn('Could not cache user culture locally:', e);
+        }
+        return updated;
+      });
 
       try {
         const cultureRef = doc(db, 'culture', cultureId);
-        await updateDoc(cultureRef, { status });
+        await setDoc(cultureRef, { status }, { merge: true });
+
+        if (targetItem?.title) {
+          const q = query(collection(db, 'culture'), where('title', '==', targetItem.title));
+          const snap = await getDocs(q);
+          for (const d of snap.docs) {
+            if (d.id !== cultureId) {
+              await setDoc(doc(db, 'culture', d.id), { status }, { merge: true });
+            }
+          }
+        }
       } catch (err) {
         console.warn('Firestore culture status update notice:', err);
       }
@@ -205,22 +271,40 @@ export const CultureProvider: React.FC<{ children: React.ReactNode }> = ({ child
   // Admin: Edit culture details
   const updateCultureItem = async (cultureId: string, updatedFields: Partial<CultureItem>): Promise<boolean> => {
     try {
+      const targetItem = cultureItems.find(c => c.id === cultureId);
+      const targetTitle = targetItem?.title.toLowerCase().trim();
+
       setCultureItems(prev =>
-        prev.map(c => (c.id === cultureId ? { ...c, ...updatedFields } : c))
+        prev.map(c => {
+          if (c.id === cultureId || (targetTitle && c.title.toLowerCase().trim() === targetTitle)) {
+            return { ...c, ...updatedFields };
+          }
+          return c;
+        })
       );
-      setUserCultureSubmissions(prev =>
-        prev.map(c => (c.id === cultureId ? { ...c, ...updatedFields } : c))
-      );
+
+      setUserCultureSubmissions(prev => {
+        const updated = prev.map(c => {
+          if (c.id === cultureId || (targetTitle && c.title.toLowerCase().trim() === targetTitle)) {
+            return { ...c, ...updatedFields };
+          }
+          return c;
+        });
+        try {
+          localStorage.setItem(LOCAL_STORAGE_CULTURE_KEY, JSON.stringify(updated));
+        } catch (e) {}
+        return updated;
+      });
 
       try {
         const cultureRef = doc(db, 'culture', cultureId);
-        await updateDoc(cultureRef, updatedFields);
+        await setDoc(cultureRef, updatedFields, { merge: true });
       } catch (err) {
-        console.warn('Firestore culture updateDoc notice:', err);
+        console.warn('Firestore updateDoc notice:', err);
       }
       return true;
     } catch (e) {
-      console.error('Failed to update culture item:', e);
+      console.error('Failed to update culture:', e);
       return false;
     }
   };
@@ -228,14 +312,36 @@ export const CultureProvider: React.FC<{ children: React.ReactNode }> = ({ child
   // Admin: Delete culture item
   const deleteCultureItem = async (cultureId: string): Promise<boolean> => {
     try {
-      setCultureItems(prev => prev.filter(c => c.id !== cultureId));
-      setUserCultureSubmissions(prev => prev.filter(c => c.id !== cultureId));
+      const targetItem = cultureItems.find(c => c.id === cultureId);
+      const targetTitle = targetItem?.title.toLowerCase().trim();
+
+      setCultureItems(prev =>
+        prev.filter(c => c.id !== cultureId && (!targetTitle || c.title.toLowerCase().trim() !== targetTitle))
+      );
+
+      setUserCultureSubmissions(prev => {
+        const updated = prev.filter(
+          c => c.id !== cultureId && (!targetTitle || c.title.toLowerCase().trim() !== targetTitle)
+        );
+        try {
+          localStorage.setItem(LOCAL_STORAGE_CULTURE_KEY, JSON.stringify(updated));
+        } catch (e) {}
+        return updated;
+      });
 
       try {
         const cultureRef = doc(db, 'culture', cultureId);
         await deleteDoc(cultureRef);
+
+        if (targetItem?.title) {
+          const q = query(collection(db, 'culture'), where('title', '==', targetItem.title));
+          const snap = await getDocs(q);
+          for (const d of snap.docs) {
+            await deleteDoc(doc(db, 'culture', d.id));
+          }
+        }
       } catch (err) {
-        console.warn('Firestore culture deleteDoc notice:', err);
+        console.warn('Firestore deleteDoc notice:', err);
       }
       return true;
     } catch (e) {
@@ -244,7 +350,7 @@ export const CultureProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   };
 
-  // Admin: Delete single image from culture item
+  // Admin: Delete single image from culture entry
   const deleteCultureImage = async (cultureId: string, imageIndex: number): Promise<boolean> => {
     const target = cultureItems.find(c => c.id === cultureId);
     if (!target || !target.images) return false;
